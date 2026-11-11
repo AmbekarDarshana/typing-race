@@ -1,70 +1,546 @@
 <!DOCTYPE html>
 <html>
   <head>
-    <title>Typing Race</title>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pixel Racers</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet" />
+        
     <style>
-      body { font-family: sans-serif; max-width: 600px; margin: 40px auto; }
-      #text { font-size: 20px; background: #eee; padding: 12px; border-radius: 6px; }
-      #typed { width: 100%; font-size: 18px; padding: 8px; box-sizing: border-box; }
-      progress { width: 60%; }
+      :root {
+        --bg: #1a1033;
+        --card: #2a1b4d;
+        --line: #5b3fa0;
+        --text: #f1e9ff;
+        --muted: #a78bda;
+        --accent: #ffd166;
+        --good: #06d6a0;
+        --bad: #ef476f;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: "Press Start 2P", monospace;
+        font-size: 11px;
+        background-color: var(--bg);
+        background-image:
+          linear-gradient(#ffffff08 1px, transparent 1px),
+          linear-gradient(90deg, #ffffff08 1px, transparent 1px);
+        background-size: 24px 24px;
+        color: var(--text);
+      }
+      main { max-width: 760px; margin: 0 auto; padding: 24px 16px; }
+      h1 { font-size: 22px; color: var(--accent); text-shadow: 3px 3px 0 #000; margin: 0 0 8px; }
+      .muted { color: var(--muted); }
+      .card {
+        background: var(--card);
+        border: 4px solid var(--line);
+        box-shadow: 6px 6px 0 #000;
+        padding: 16px;
+        margin-top: 20px;
+      }
+      .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+      input, select {
+        flex: 1;
+        min-width: 120px;
+        padding: 12px;
+        font-family: inherit;
+        font-size: 11px;
+        background: #0e0820;
+        color: var(--text);
+        border: 3px solid var(--line);
+        outline: none;
+      }
+      input:focus { border-color: var(--accent); }
+      button {
+        padding: 12px 14px;
+        font-family: inherit;
+        font-size: 11px;
+        background: var(--accent);
+        color: #1a1033;
+        border: 3px solid #000;
+        box-shadow: 3px 3px 0 #000;
+        cursor: pointer;
+      }
+      button:active { transform: translate(3px, 3px); box-shadow: none; }
+      button.secondary { background: #7c5cd6; color: #fff; }
+      .badge { background: #000; color: var(--accent); padding: 4px 8px; margin-left: 8px; }
+
+      /* Character picker */
+      .avatars { display: flex; gap: 10px; margin-top: 12px; }
+      .avatar-btn {
+        padding: 6px;
+        background: #0e0820;
+        box-shadow: none;
+        border: 3px solid var(--line);
+      }
+      .avatar-btn.selected { border-color: var(--accent); background: #3b2a6e; }
+
+      /* Typing area */
+      #text {
+        font-family: Consolas, "Courier New", monospace;
+        font-size: 22px;
+        line-height: 1.7;
+        margin-bottom: 12px;
+        min-height: 40px;
+      }
+      #text span { color: var(--muted); }
+      #text span.ok { color: var(--good); }
+      #text span.bad { background: var(--bad); color: #fff; }
+      #text span.cursor { border-bottom: 3px solid var(--accent); }
+      #typed { width: 100%; font-family: Consolas, monospace; font-size: 18px; }
+
+      /* Track */
+      .lane {
+        position: relative;
+        height: 64px;
+        margin: 10px 0;
+        background: repeating-linear-gradient(90deg, #0e0820 0 16px, #150b2c 16px 32px);
+        border: 3px solid var(--line);
+      }
+      .lane .flag { position: absolute; right: 6px; top: 8px; font-size: 20px; }
+      .runner {
+        position: absolute;
+        top: 4px;
+        left: 0;
+        transition: left 0.25s linear;
+      }
+      .runner canvas { image-rendering: pixelated; display: block; }
+      .runner.running canvas { animation: hop 0.3s steps(2) infinite; }
+      @keyframes hop { 50% { transform: translateY(-6px); } }
+      .lane .label { position: absolute; left: 6px; bottom: 2px; font-size: 8px; text-shadow: 1px 1px 0 #000; }
+      .lane .stats { position: absolute; right: 36px; bottom: 2px; font-size: 8px; text-shadow: 1px 1px 0 #000; }
+
+      /* Countdown overlay */
+      #overlay {
+        position: fixed;
+        inset: 0;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        font-size: 96px;
+        color: var(--accent);
+        text-shadow: 6px 6px 0 #000;
+        background: #00000088;
+        pointer-events: none;
+      }
+        /* Results modal */
+      #results {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #000000bb;
+        z-index: 10;
+      }
+      #results[hidden] { display: none; }
+      .results-card { width: 92%; max-width: 560px; }
+      .results-card h2 { color: var(--accent); text-align: center; margin-top: 0; }
+      .result-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 10px;
+        margin: 6px 0;
+        background: #0e0820;
+        border: 3px solid var(--line);
+      }
+      .result-row.me { border-color: var(--accent); }
+      .result-row.first { background: #3b2a6e; }
+      .stat-grid { display: flex; gap: 10px; flex-wrap: wrap; }
+      .stat-box { flex: 1; min-width: 100px; background: #0e0820; border: 3px solid var(--line); padding: 10px; text-align: center; }
+      .stat-box b { display: block; font-size: 16px; color: var(--accent); margin-top: 6px; }
     </style>
   </head>
   <body>
-    <h1>Typing Race 🏁</h1>
-    <p id="status">Connecting...</p>
+    <main>
+      <h1>PIXEL RACERS</h1>
+      <p class="muted" id="status">Connecting...</p>
 
-    <input id="room" placeholder="Room name" />
-    <button id="join">Join</button>
-    <button id="start">Start race</button>
+      <div class="card" id="lobby">
+        <div class="row">
+          <input id="name" placeholder="Your name" maxlength="16" />
+          <input id="room" placeholder="Room code" maxlength="20" />
+        </div>
+        <p class="muted" style="margin-bottom: 0">Pick your racer:</p>
+        <div class="avatars" id="avatars"></div>
+        <div class="row" style="margin-top: 14px">
+          <button id="join">Join</button>
+          <button id="create" class="secondary">Create new room</button>
+        </div>
+      </div>
 
-    <p id="state"></p>
-    <p id="text"></p>
-    <input id="typed" placeholder="Type here when the race starts" disabled />
-    <div id="players"></div>
+      <div class="card" id="roomInfo" hidden>
+        <p style="margin-top: 0">
+          Room: <b id="roomName"></b>
+          <span class="badge" id="state"></span>
+          <span class="badge" id="modeBadge"></span>
+        </p>
+        <div class="row">
+          <input id="share" readonly />
+          <button id="copy" class="secondary">Copy link</button>
+        </div>
+        <div class="row" style="margin-top: 10px">
+          <select id="mode">
+            <option value="easy">Easy</option>
+            <option value="normal" selected>Normal</option>
+            <option value="devops">DevOps commands</option>
+          </select>
+          <button id="start">START RACE</button>
+          <button id="sound" class="secondary">Sound: on</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div id="text" class="muted">Join a room to see the text.</div>
+        <input id="typed" placeholder="Type here when the race starts" disabled autocomplete="off" />
+      </div>
+
+      <div class="card">
+        <div id="track" class="muted">No racers yet.</div>
+      </div>
+            <div class="card">
+        <p style="margin-top: 0">YOUR STATS</p>
+        <div class="stat-grid" id="stats"></div>
+      </div>
+
+    </main>
+        <div id="results" hidden>
+      <div class="card results-card">
+        <h2>RESULTS</h2>
+        <div id="podium"></div>
+        <button id="closeResults" style="width: 100%; margin-top: 12px">Close</button>
+      </div>
+    </div>
+
+    <div id="overlay"></div>
 
     <script src="/socket.io/socket.io.js"></script>
     <script>
       const socket = io();
-      const typed = document.getElementById("typed");
+      const $ = (id) => document.getElementById(id);
+      const typed = $("typed");
+      let currentText = "";
+      let soundOn = true;
+      let selectedAvatar = localStorage.getItem("avatar") || "cat";
 
-      socket.on("connect", () => {
-        document.getElementById("status").textContent = "Connected!";
+      // ---------- Pixel sprites: 8x8 grids drawn onto a canvas ----------
+      const PALETTE = {
+        O: "#fb923c", K: "#1e1b2e", P: "#f472b6", G: "#4ade80",
+        W: "#f8fafc", S: "#94a3b8", B: "#38bdf8", R: "#f87171",
+      };
+      const SPRITES = {
+        cat: [
+          "O......O",
+          "OO....OO",
+          "OOOOOOOO",
+          "OKOOOOKO",
+          "OOOPPOOO",
+          "OOOOOOOO",
+          ".OOOOOO.",
+          "..O..O..",
+        ],
+        frog: [
+          ".GG..GG.",
+          "GWKGGWKG",
+          "GGGGGGGG",
+          "GKGGGGKG",
+          "GGKKKKGG",
+          "GGGGGGGG",
+          ".GG..GG.",
+          "........",
+        ],
+        robot: [
+          "...RR...",
+          "...SS...",
+          ".SSSSSS.",
+          "SSBSSBSS",
+          "SSSSSSSS",
+          "SSKKKKSS",
+          ".SSSSSS.",
+          ".SS..SS.",
+        ],
+        ghost: [
+          "..WWWW..",
+          ".WWWWWW.",
+          "WWKWWKWW",
+          "WWKWWKWW",
+          "WWWWWWWW",
+          "WWWKKWWW",
+          "WWWWWWWW",
+          "W.WW.WW.",
+        ],
+      };
+
+      function makeSprite(name, scale) {
+        const grid = SPRITES[name] || SPRITES.cat;
+        const canvas = document.createElement("canvas");
+        canvas.width = 8 * scale;
+        canvas.height = 8 * scale;
+        const ctx = canvas.getContext("2d");
+        grid.forEach((row, y) => {
+          [...row].forEach((ch, x) => {
+            if (PALETTE[ch]) {
+              ctx.fillStyle = PALETTE[ch];
+              ctx.fillRect(x * scale, y * scale, scale, scale);
+            }
+          });
+        });
+        return canvas;
+      }
+
+      // ---------- Avatar picker ----------
+      function drawPicker() {
+        const box = $("avatars");
+        box.innerHTML = "";
+        Object.keys(SPRITES).forEach((name) => {
+          const btn = document.createElement("button");
+          btn.className = "avatar-btn" + (name === selectedAvatar ? " selected" : "");
+          btn.title = name;
+          btn.appendChild(makeSprite(name, 5));
+          btn.addEventListener("click", () => {
+            selectedAvatar = name;
+            localStorage.setItem("avatar", name);
+            drawPicker();
+          });
+          box.appendChild(btn);
+        });
+      }
+      drawPicker();
+
+      // ---------- Sound (tiny beeps from the browser, no files) ----------
+      function beep(freq, ms) {
+        if (!soundOn) return;
+        const ac = (beep.ctx = beep.ctx || new AudioContext());
+        const osc = ac.createOscillator();
+        const gain = ac.createGain();
+        osc.type = "square";
+        osc.frequency.value = freq;
+        gain.gain.value = 0.05;
+        osc.connect(gain);
+        gain.connect(ac.destination);
+        osc.start();
+        osc.stop(ac.currentTime + ms / 1000);
+      }
+      $("sound").addEventListener("click", () => {
+        soundOn = !soundOn;
+        $("sound").textContent = "Sound: " + (soundOn ? "on" : "off");
       });
 
-      document.getElementById("join").addEventListener("click", () => {
-        socket.emit("race:join", document.getElementById("room").value);
+      // ---------- Lobby ----------
+      $("name").value = localStorage.getItem("name") || "";
+      $("room").value = new URLSearchParams(location.search).get("room") || "";
+
+      socket.on("connect", () => ($("status").textContent = "Connected ✅"));
+      socket.on("disconnect", () => ($("status").textContent = "Disconnected ❌ (server down?)"));
+
+      function join(room) {
+        const name = $("name").value.trim();
+        if (!name || !room) {
+          alert("Enter your name and a room code");
+          return;
+        }
+        localStorage.setItem("name", name);
+        socket.emit("race:join", { room, name, avatar: selectedAvatar });
+      }
+
+      $("join").addEventListener("click", () => join($("room").value));
+      $("create").addEventListener("click", () => {
+        const code = Math.random().toString(36).slice(2, 6);
+        $("room").value = code;
+        join(code);
+      });
+      $("start").addEventListener("click", () => socket.emit("race:start", $("mode").value));
+      $("copy").addEventListener("click", () => {
+        navigator.clipboard.writeText($("share").value);
+        $("copy").textContent = "Copied!";
+        setTimeout(() => ($("copy").textContent = "Copy link"), 1500);
       });
 
-      document.getElementById("start").addEventListener("click", () => {
-        socket.emit("race:start");
+      socket.on("race:joined", ({ room }) => {
+        $("roomInfo").hidden = false;
+        $("roomName").textContent = room;
+        $("share").value = location.origin + "/?room=" + room;
       });
+
+      // ---------- Text and typing ----------
+      function renderText(value) {
+        const box = $("text");
+        box.innerHTML = "";
+        [...currentText].forEach((ch, i) => {
+          const span = document.createElement("span");
+          span.textContent = ch;
+          if (i < value.length) span.className = value[i] === ch ? "ok" : "bad";
+          else if (i === value.length) span.className = "cursor";
+          box.appendChild(span);
+        });
+      }
 
       socket.on("race:text", (text) => {
-        document.getElementById("text").textContent = text;
+        currentText = text;
         typed.value = "";
+        $("text").classList.remove("muted");
+        renderText("");
       });
 
+      typed.addEventListener("input", () => {
+        renderText(typed.value);
+        socket.emit("race:progress", typed.value);
+      });
+      typed.addEventListener("paste", (e) => e.preventDefault());
+
+      // ---------- Countdown ----------
+      function showOverlay(text) {
+        $("overlay").style.display = "flex";
+        $("overlay").textContent = text;
+      }
+      socket.on("race:countdown", () => {
+        let n = 3;
+        showOverlay(n);
+        beep(440, 150);
+        const timer = setInterval(() => {
+          n--;
+          if (n > 0) {
+            showOverlay(n);
+            beep(440, 150);
+          } else {
+            clearInterval(timer);
+          }
+        }, 1000);
+      });
       socket.on("race:go", () => {
+        showOverlay("GO!");
+        beep(880, 400);
+        setTimeout(() => ($("overlay").style.display = "none"), 700);
         typed.disabled = false;
         typed.value = "";
         typed.focus();
       });
 
-      typed.addEventListener("input", () => {
-        socket.emit("race:progress", typed.value);
-      });
+      // ---------- Race track ----------
+      const lanes = {}; // socket id -> { lane, runner, stats }
 
-      socket.on("race:update", ({ status, players }) => {
-        document.getElementById("state").textContent = "Status: " + status;
+      socket.on("race:update", ({ status, mode, players }) => {
+        $("state").textContent = status;
+        $("modeBadge").textContent = mode;
         if (status !== "running") typed.disabled = true;
 
-        document.getElementById("players").innerHTML = players
-          .map(
-            (p) => `<p>${p.name}: <progress max="100" value="${p.progress}"></progress>
-              ${p.progress}% | ${p.wpm} WPM ${p.finished ? "🏆" : ""}</p>`
-          )
-          .join("");
+        const track = $("track");
+        if (players.length) {
+          track.classList.remove("muted");
+          if (track.firstChild && track.firstChild.nodeType === 3) track.innerHTML = "";
+        }
+
+        // remove lanes of players who left
+        const ids = players.map((p) => p.id);
+        Object.keys(lanes).forEach((id) => {
+          if (!ids.includes(id)) {
+            lanes[id].lane.remove();
+            delete lanes[id];
+          }
+        });
+
+        players.forEach((p) => {
+          if (!lanes[p.id]) {
+            const lane = document.createElement("div");
+            lane.className = "lane";
+
+            const flag = document.createElement("span");
+            flag.className = "flag";
+            flag.textContent = "🏁";
+
+            const runner = document.createElement("div");
+            runner.className = "runner";
+            runner.appendChild(makeSprite(p.avatar, 5));
+
+            const label = document.createElement("span");
+            label.className = "label";
+            label.textContent = p.name + (p.id === socket.id ? " (you)" : "");
+
+            const stats = document.createElement("span");
+            stats.className = "stats";
+
+            lane.append(flag, runner, label, stats);
+            track.appendChild(lane);
+            lanes[p.id] = { lane, runner, stats };
+          }
+
+          const l = lanes[p.id];
+          // sprite is 40px wide, so the track length is (100% - 40px)
+          l.runner.style.left = `calc((100% - 40px) * ${p.progress / 100})`;
+          l.runner.classList.toggle("running", status === "running" && !p.finished);
+          l.stats.textContent = `${p.progress}% ${p.wpm} WPM ${p.finished ? "🏆" : ""}`;
+        });
       });
+            // ---------- Results + personal stats ----------
+      function loadHistory() {
+        try {
+          return JSON.parse(localStorage.getItem("history")) || [];
+        } catch {
+          return [];
+        }
+      }
+
+      function renderStats() {
+        const history = loadHistory();
+        const best = history.length ? Math.max(...history.map((h) => h.wpm)) : 0;
+        const last10 = history.slice(-10);
+        const avg = last10.length
+          ? Math.round(last10.reduce((sum, h) => sum + h.wpm, 0) / last10.length)
+          : 0;
+        const boxes = [
+          ["Best WPM", best],
+          ["Avg (last 10)", avg],
+          ["Races", history.length],
+        ];
+        const box = $("stats");
+        box.innerHTML = "";
+        boxes.forEach(([label, value]) => {
+          const div = document.createElement("div");
+          div.className = "stat-box";
+          div.append(label);
+          const b = document.createElement("b");
+          b.textContent = value;
+          div.appendChild(b);
+          box.appendChild(div);
+        });
+      }
+      renderStats();
+
+      const MEDALS = ["🥇", "🥈", "🥉"];
+
+      socket.on("race:results", ({ mode, players }) => {
+        const podium = $("podium");
+        podium.innerHTML = "";
+
+        players.forEach((p, i) => {
+          const row = document.createElement("div");
+          row.className = "result-row" + (p.id === socket.id ? " me" : "") + (i === 0 ? " first" : "");
+          const left = document.createElement("span");
+          left.textContent = (p.finished ? MEDALS[i] || "#" + (i + 1) : "DNF") + " " + p.name;
+          const right = document.createElement("span");
+          const secs = p.timeMs ? (p.timeMs / 1000).toFixed(1) + "s" : "-";
+          right.textContent = `${p.wpm} WPM · ${p.accuracy}% · ${secs}`;
+          row.append(left, right);
+          podium.appendChild(row);
+        });
+
+        // save MY result to my browser
+        const me = players.find((p) => p.id === socket.id);
+        if (me && me.finished) {
+          const history = loadHistory();
+          history.push({ wpm: me.wpm, accuracy: me.accuracy, mode, date: Date.now() });
+          localStorage.setItem("history", JSON.stringify(history.slice(-50)));
+          renderStats();
+        }
+
+        $("results").hidden = false;
+      });
+
+      $("closeResults").addEventListener("click", () => ($("results").hidden = true));
+      socket.on("race:countdown", () => ($("results").hidden = true));
     </script>
   </body>
 </html>
