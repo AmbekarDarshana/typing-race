@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html>
+  <body>
+    <h1>Typing Race 🏁</h1>
+    <p id="status">Connecting...</p>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+      const socket = io();
+
+      socket.on("connect", () => {
+        document.getElementById("status").textContent = "Connected!";
+      });
+    </script>
+  </body>
+</html>
