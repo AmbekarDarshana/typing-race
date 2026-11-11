@@ -219,7 +219,7 @@
 
     <script src="/socket.io/socket.io.js"></script>
     <script>
-      const socket = io();
+      const socket = io({ transports: ["websocket"] });
       const $ = (id) => document.getElementById(id);
       const typed = $("typed");
       let currentText = "";
@@ -335,7 +335,9 @@
 
       socket.on("connect", () => ($("status").textContent = "Connected ✅"));
       socket.on("disconnect", () => ($("status").textContent = "Disconnected ❌ (server down?)"));
-
+      socket.on("server:info", (id) => {
+  $("status").textContent = "Connected ✅ · server " + id;
+});
       function join(room) {
         const name = $("name").value.trim();
         if (!name || !room) {

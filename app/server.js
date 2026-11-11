@@ -1,16 +1,36 @@
+const os = require("os");
 const express = require("express");
-const { cleanRoom, cleanName, countCorrect, calcWpm, calcAccuracy } = require("./logic");
 const http = require("http");
 const { Server } = require("socket.io");
+const { createClient } = require("redis");
+const { createAdapter } = require("@socket.io/redis-adapter");
+const { cleanRoom, cleanName, countCorrect, calcWpm, calcAccuracy } = require("./logic");
+
+const INSTANCE = os.hostname(); // inside Docker this is the container ID
+const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";
+const TTL = 3600; // rooms expire from Redis after 1 hour
+const GRACE_MS = 15000;
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
+// disableOfflineQueue: if Redis is down, fail fast instead of hanging
+const redis = createClient({ url: REDIS_URL, disableOfflineQueue: true });
+const sub = redis.duplicate();
+redis.on("error", (e) => console.error("redis error:", e.message));
+sub.on("error", (e) => console.error("redis sub error:", e.message));
+
 app.use(express.static("public"));
 
-app.get("/health", (req, res) => {
-  res.json({ status: "ok", uptime: process.uptime() });
+// Health now checks the dependency too
+app.get("/health", async (req, res) => {
+  try {
+    await redis.ping();
+    res.json({ status: "ok", instance: INSTANCE, uptime: process.uptime() });
+  } catch {
+    res.status(503).json({ status: "error", instance: INSTANCE, redis: "down" });
+  }
 });
 
 const TEXTS = {
@@ -36,31 +56,48 @@ const TEXTS = {
     "curl -f http://localhost:3000/health",
   ],
 };
-
 const AVATARS = ["cat", "frog", "robot", "ghost"];
-const GRACE_MS = 15000; // race ends this long after the first finisher
 
 function randomText(mode) {
   const list = TEXTS[mode] || TEXTS.normal;
   return list[Math.floor(Math.random() * list.length)];
 }
-
 function cleanAvatar(avatar) {
   return AVATARS.includes(avatar) ? avatar : "cat";
 }
-
 function cleanMode(mode) {
   return TEXTS[mode] ? mode : "normal";
 }
 
-// room name -> { text, mode, status, startTime, round, players }
-// status: waiting | countdown | running | finished
-const races = {};
+// If a handler throws, log it instead of crashing the whole server
+const safe = (fn) => async (...args) => {
+  try {
+    await fn(...args);
+  } catch (e) {
+    console.error("handler error:", e.message);
+  }
+};
 
-function newPlayer(socket, data) {
+// ---------- Redis data layout ----------
+// race:<room>     hash: text, mode, status, startTime, round, finishedCount
+// players:<room>  hash: socketId -> JSON of that player
+const raceKey = (room) => "race:" + room;
+const playersKey = (room) => "players:" + room;
+
+async function getRace(room) {
+  const race = await redis.hGetAll(raceKey(room));
+  return Object.keys(race).length ? race : null;
+}
+
+async function getPlayers(room) {
+  const all = await redis.hGetAll(playersKey(room));
+  return Object.values(all).map((json) => JSON.parse(json));
+}
+
+function newPlayer(id, data) {
   return {
-    id: socket.id,
-    name: cleanName(data.name, socket.id),
+    id,
+    name: cleanName(data.name, id),
     avatar: cleanAvatar(data.avatar),
     progress: 0,
     wpm: 0,
@@ -75,30 +112,32 @@ function newPlayer(socket, data) {
 }
 
 function resetPlayer(p) {
-  p.progress = 0;
-  p.wpm = 0;
-  p.finished = false;
-  p.place = null;
-  p.timeMs = null;
-  p.accuracy = 100;
-  p.keys = 0;
-  p.mistakes = 0;
-  p.lastLen = 0;
+  return {
+    ...p,
+    progress: 0,
+    wpm: 0,
+    finished: false,
+    place: null,
+    timeMs: null,
+    accuracy: 100,
+    keys: 0,
+    mistakes: 0,
+    lastLen: 0,
+  };
 }
 
-function broadcast(room) {
-  const race = races[room];
+async function broadcast(room) {
+  const race = await getRace(room);
   if (!race) return;
   io.to(room).emit("race:update", {
     status: race.status,
     mode: race.mode,
-    players: Object.values(race.players),
+    players: await getPlayers(room),
   });
 }
 
-// finished players first (by place), then the rest by progress
-function standings(race) {
-  return Object.values(race.players).sort((a, b) => {
+function standings(players) {
+  return players.sort((a, b) => {
     if (a.finished && b.finished) return a.place - b.place;
     if (a.finished) return -1;
     if (b.finished) return 1;
@@ -106,136 +145,200 @@ function standings(race) {
   });
 }
 
-// "round" stops an old timer from ending a newer race
-function finishRace(room, round) {
-  const race = races[room];
-  if (!race || race.round !== round || race.status !== "running") return;
-  race.status = "finished";
-  broadcast(room);
-  io.to(room).emit("race:results", { mode: race.mode, players: standings(race) });
+async function finishRace(room, round) {
+  const race = await getRace(room);
+  if (!race || Number(race.round) !== round || race.status !== "running") return;
+
+  // Two containers might try to finish the same race at once.
+  // hSetNX ("set if not exists") is atomic, so only ONE of them wins.
+  const won = await redis.hSetNX(raceKey(room), "ended:" + round, "1");
+  if (!won) return;
+
+  await redis.hSet(raceKey(room), "status", "finished");
+  await broadcast(room);
+  const players = standings(await getPlayers(room));
+  io.to(room).emit("race:results", { mode: race.mode, players });
 }
 
-function leaveRoom(socket) {
+async function leaveRoom(socket) {
   const room = socket.data.room;
   if (!room) return;
-  socket.leave(room);
   socket.data.room = null;
+  socket.leave(room);
 
-  const race = races[room];
-  if (!race) return;
-  delete race.players[socket.id];
-
-  if (Object.keys(race.players).length === 0) {
-    delete races[room];
+  await redis.hDel(playersKey(room), socket.id);
+  if ((await redis.hLen(playersKey(room))) === 0) {
+    await redis.del([raceKey(room), playersKey(room)]);
     return;
   }
-  broadcast(room);
-  if (race.status === "running" && Object.values(race.players).every((p) => p.finished)) {
-    finishRace(room, race.round);
+  await broadcast(room);
+
+  const race = await getRace(room);
+  if (race && race.status === "running") {
+    const players = await getPlayers(room);
+    if (players.every((p) => p.finished)) await finishRace(room, Number(race.round));
+  }
+}
+
+async function handleProgress(socket, typed) {
+  const room = socket.data.room;
+  if (!room || typeof typed !== "string") return;
+
+  const [status, text, startTime, round] = await redis.hmGet(raceKey(room), [
+    "status",
+    "text",
+    "startTime",
+    "round",
+  ]);
+  if (status !== "running" || !text) return;
+  if (typed.length > text.length + 50) return;
+
+  const raw = await redis.hGet(playersKey(room), socket.id);
+  if (!raw) return;
+  const player = JSON.parse(raw);
+  if (player.finished) return;
+
+  for (let i = player.lastLen; i < typed.length; i++) {
+    player.keys++;
+    if (typed[i] !== text[i]) player.mistakes++;
+  }
+  player.lastLen = typed.length;
+  player.accuracy = calcAccuracy(player.keys, player.mistakes);
+
+  const correct = countCorrect(typed, text);
+  const elapsed = Date.now() - Number(startTime);
+  player.progress = Math.round((correct / text.length) * 100);
+  player.wpm = calcWpm(correct, elapsed);
+
+  if (correct === text.length) {
+    player.finished = true;
+    player.timeMs = elapsed;
+    // hIncrBy is atomic, so two finishers can never get the same place
+    player.place = await redis.hIncrBy(raceKey(room), "finishedCount", 1);
+    if (player.place === 1) {
+      setTimeout(safe(() => finishRace(room, Number(round))), GRACE_MS);
+    }
+  }
+
+  await redis.hSet(playersKey(room), socket.id, JSON.stringify(player));
+  await broadcast(room);
+
+  if (player.finished) {
+    const players = await getPlayers(room);
+    if (players.every((p) => p.finished)) await finishRace(room, Number(round));
   }
 }
 
 io.on("connection", (socket) => {
-  console.log("player connected:", socket.id);
+  console.log(`[${INSTANCE}] player connected:`, socket.id);
+  socket.emit("server:info", INSTANCE);
 
-  socket.on("race:join", (data) => {
-    const room = cleanRoom(data && data.room);
-    if (!room) return;
+  socket.on(
+    "race:join",
+    safe(async (data) => {
+      const room = cleanRoom(data && data.room);
+      if (!room) return;
 
-    leaveRoom(socket);
+      await leaveRoom(socket);
 
-    if (!races[room]) {
-      races[room] = {
-        text: randomText("normal"),
-        mode: "normal",
-        status: "waiting",
-        startTime: null,
-        round: 0,
-        players: {},
-      };
-    }
-    const race = races[room];
-
-    socket.data.room = room;
-    socket.join(room);
-    race.players[socket.id] = newPlayer(socket, data);
-
-    socket.emit("race:joined", { room });
-    socket.emit("race:text", race.text);
-    broadcast(room);
-  });
-
-  socket.on("race:start", (mode) => {
-    const room = socket.data.room;
-    const race = races[room];
-    if (!race || race.status === "countdown" || race.status === "running") return;
-
-    race.round++;
-    const round = race.round;
-    race.mode = cleanMode(mode);
-    race.text = randomText(race.mode);
-    race.status = "countdown";
-    Object.values(race.players).forEach(resetPlayer);
-
-    io.to(room).emit("race:text", race.text);
-    io.to(room).emit("race:countdown");
-    broadcast(room);
-
-    setTimeout(() => {
-      if (races[room] !== race || race.round !== round) return;
-      race.status = "running";
-      race.startTime = Date.now();
-      io.to(room).emit("race:go");
-      broadcast(room);
-    }, 3000);
-  });
-
-  socket.on("race:progress", (typed) => {
-    const room = socket.data.room;
-    const race = races[room];
-    if (!race || race.status !== "running" || typeof typed !== "string") return;
-    if (typed.length > race.text.length + 50) return;
-
-    const player = race.players[socket.id];
-    if (!player || player.finished) return;
-
-    // accuracy: count every NEW character typed, and whether it was wrong
-    for (let i = player.lastLen; i < typed.length; i++) {
-      player.keys++;
-      if (typed[i] !== race.text[i]) player.mistakes++;
-    }
-    player.lastLen = typed.length;
-       player.accuracy = calcAccuracy(player.keys, player.mistakes);
-
-    const correct = countCorrect(typed, race.text);
-    const elapsed = Date.now() - race.startTime;
-    player.progress = Math.round((correct / race.text.length) * 100);
-    player.wpm = calcWpm(correct, elapsed);
-
-    if (correct === race.text.length) {
-      player.finished = true;
-      player.timeMs = elapsed;
-      player.place = Object.values(race.players).filter((p) => p.finished).length;
-      if (player.place === 1) {
-        const round = race.round;
-        setTimeout(() => finishRace(room, round), GRACE_MS);
+      if (!(await redis.exists(raceKey(room)))) {
+        await redis.hSet(raceKey(room), {
+          text: randomText("normal"),
+          mode: "normal",
+          status: "waiting",
+          startTime: "0",
+          round: "0",
+          finishedCount: "0",
+        });
       }
-    }
 
-    broadcast(room);
-    if (Object.values(race.players).every((p) => p.finished)) {
-      finishRace(room, race.round);
-    }
+      socket.data.room = room;
+      await socket.join(room);
+      await redis.hSet(playersKey(room), socket.id, JSON.stringify(newPlayer(socket.id, data)));
+      await redis.expire(raceKey(room), TTL);
+      await redis.expire(playersKey(room), TTL);
+
+      socket.emit("race:joined", { room });
+      socket.emit("race:text", await redis.hGet(raceKey(room), "text"));
+      await broadcast(room);
+    })
+  );
+
+  socket.on(
+    "race:start",
+    safe(async (mode) => {
+      const room = socket.data.room;
+      if (!room) return;
+      const race = await getRace(room);
+      if (!race || race.status === "countdown" || race.status === "running") return;
+
+      const round = Number(race.round) + 1;
+      const chosen = cleanMode(mode);
+      const text = randomText(chosen);
+
+      await redis.hSet(raceKey(room), {
+        round: String(round),
+        mode: chosen,
+        text,
+        status: "countdown",
+        startTime: "0",
+        finishedCount: "0",
+      });
+      for (const p of await getPlayers(room)) {
+        await redis.hSet(playersKey(room), p.id, JSON.stringify(resetPlayer(p)));
+      }
+
+      io.to(room).emit("race:text", text);
+      io.to(room).emit("race:countdown");
+      await broadcast(room);
+
+      setTimeout(
+        safe(async () => {
+          const current = await getRace(room);
+          if (!current || Number(current.round) !== round) return;
+          await redis.hSet(raceKey(room), {
+            status: "running",
+            startTime: String(Date.now()),
+          });
+          io.to(room).emit("race:go");
+          await broadcast(room);
+        }),
+        3000
+      );
+    })
+  );
+
+  // Handle one progress event at a time per player, so two quick keystrokes
+  // can't read the same old data and overwrite each other
+  let chain = Promise.resolve();
+  socket.on("race:progress", (typed) => {
+    chain = chain.then(() => handleProgress(socket, typed)).catch((e) => console.error(e.message));
   });
 
-  socket.on("disconnect", () => {
-    console.log("player left:", socket.id);
-    leaveRoom(socket);
-  });
+  socket.on(
+    "disconnect",
+    safe(async () => {
+      console.log(`[${INSTANCE}] player left:`, socket.id);
+      await leaveRoom(socket);
+    })
+  );
 });
 
-const PORT = process.env.PORT || 3000;
+// Docker sends SIGTERM on `docker stop`
+process.on("SIGTERM", () => {
+  console.log(`[${INSTANCE}] SIGTERM received, shutting down`);
+  process.exit(0);
+});
 
-server.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+async function main() {
+  await Promise.all([redis.connect(), sub.connect()]);
+  io.adapter(createAdapter(redis, sub));
+
+  const PORT = process.env.PORT || 3000;
+  server.listen(PORT, () => console.log(`[${INSTANCE}] Server is running on port ${PORT}`));
+}
+
+main().catch((e) => {
+  console.error("startup failed:", e.message);
+  process.exit(1);
 });
