@@ -1,4 +1,5 @@
 const express = require("express");
+const { cleanRoom, cleanName, countCorrect, calcWpm, calcAccuracy } = require("./logic");
 const http = require("http");
 const { Server } = require("socket.io");
 
@@ -42,18 +43,6 @@ const GRACE_MS = 15000; // race ends this long after the first finisher
 function randomText(mode) {
   const list = TEXTS[mode] || TEXTS.normal;
   return list[Math.floor(Math.random() * list.length)];
-}
-
-function cleanRoom(room) {
-  return String(room || "")
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9-]/g, "")
-    .slice(0, 20);
-}
-
-function cleanName(name, socketId) {
-  return String(name || "").trim().slice(0, 16) || "Player " + socketId.slice(0, 4);
 }
 
 function cleanAvatar(avatar) {
@@ -216,19 +205,12 @@ io.on("connection", (socket) => {
       if (typed[i] !== race.text[i]) player.mistakes++;
     }
     player.lastLen = typed.length;
-    player.accuracy = player.keys
-      ? Math.round(((player.keys - player.mistakes) / player.keys) * 100)
-      : 100;
+       player.accuracy = calcAccuracy(player.keys, player.mistakes);
 
-    let correct = 0;
-    while (correct < typed.length && typed[correct] === race.text[correct]) {
-      correct++;
-    }
-
+    const correct = countCorrect(typed, race.text);
     const elapsed = Date.now() - race.startTime;
-    const minutes = Math.max(elapsed / 60000, 0.001);
     player.progress = Math.round((correct / race.text.length) * 100);
-    player.wpm = Math.round(correct / 5 / minutes);
+    player.wpm = calcWpm(correct, elapsed);
 
     if (correct === race.text.length) {
       player.finished = true;
