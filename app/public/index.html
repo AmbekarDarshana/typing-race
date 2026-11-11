@@ -1,20 +1,69 @@
 <!DOCTYPE html>
 <html>
+  <head>
+    <title>Typing Race</title>
+    <style>
+      body { font-family: sans-serif; max-width: 600px; margin: 40px auto; }
+      #text { font-size: 20px; background: #eee; padding: 12px; border-radius: 6px; }
+      #typed { width: 100%; font-size: 18px; padding: 8px; box-sizing: border-box; }
+      progress { width: 60%; }
+    </style>
+  </head>
   <body>
     <h1>Typing Race 🏁</h1>
     <p id="status">Connecting...</p>
-    <p id="race-text"></p>
+
+    <input id="room" placeholder="Room name" />
+    <button id="join">Join</button>
+    <button id="start">Start race</button>
+
+    <p id="state"></p>
+    <p id="text"></p>
+    <input id="typed" placeholder="Type here when the race starts" disabled />
+    <div id="players"></div>
 
     <script src="/socket.io/socket.io.js"></script>
     <script>
       const socket = io();
+      const typed = document.getElementById("typed");
 
       socket.on("connect", () => {
         document.getElementById("status").textContent = "Connected!";
       });
 
+      document.getElementById("join").addEventListener("click", () => {
+        socket.emit("race:join", document.getElementById("room").value);
+      });
+
+      document.getElementById("start").addEventListener("click", () => {
+        socket.emit("race:start");
+      });
+
       socket.on("race:text", (text) => {
-        document.getElementById("race-text").textContent = text;
+        document.getElementById("text").textContent = text;
+        typed.value = "";
+      });
+
+      socket.on("race:go", () => {
+        typed.disabled = false;
+        typed.value = "";
+        typed.focus();
+      });
+
+      typed.addEventListener("input", () => {
+        socket.emit("race:progress", typed.value);
+      });
+
+      socket.on("race:update", ({ status, players }) => {
+        document.getElementById("state").textContent = "Status: " + status;
+        if (status !== "running") typed.disabled = true;
+
+        document.getElementById("players").innerHTML = players
+          .map(
+            (p) => `<p>${p.name}: <progress max="100" value="${p.progress}"></progress>
+              ${p.progress}% | ${p.wpm} WPM ${p.finished ? "🏆" : ""}</p>`
+          )
+          .join("");
       });
     </script>
   </body>
