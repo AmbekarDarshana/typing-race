@@ -37,5 +37,5 @@ jobs:
           image-ref: typing-race:ci
           severity: CRITICAL,HIGH
           ignore-unfixed: true
-          exit-code: "0"
+          exit-code: "1"
           format: table
