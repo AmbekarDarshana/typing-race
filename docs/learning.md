@@ -202,3 +202,27 @@ Habit I learned: before running a fix command, run `ls` or `docker compose ps` t
 - I broke a test on purpose and CI went red (run #2), then I removed it and CI went green (run #3).
 - README has a CI badge that shows the live status.
 
+## Step 16-19: CI scan, GHCR, Terraform
+
+### Bugs and fixes
+
+| Problem | Reason | Fix / Lesson |
+|---|---|---|
+| `Unable to resolve action trivy-action@0.28.0` | Wo version tag exist hi nahi karta tha | Version pin karne se pehle tags page check karo, guess mat karo |
+| Trivy green tick, par 6 HIGH CVEs the | `exit-code "0"` ka matlab scan fail hone par bhi build pass | Green tick != secure. Gate ke liye `exit-code "1"` |
+| CVEs `brace-expansion` aur `undici` | Wo app ke nahi, base image ke **npm** ke andar the (`/usr/local/lib/node_modules/npm`) | Runtime image se npm hata diya (`rm -rf ...npm`). Runtime ko npm chahiye hi nahi |
+| Trivy `Total:` line nahi dikhi | Trivy `Total:` tab hi print karta hai jab kuch mile | Line ka na hona = kuch nahi mila |
+| CI #12 red | `ci.yml` mein YAML indentation galat thi | Khud fix kiya. YAML mein spaces ka matlab hota hai |
+| `Hashicrop.Terraform` not found | Typo (`Hashicorp`) | Commands copy-paste karo |
+| `terraform apply` cancelled | `y` type kiya, Terraform ko poora `yes` chahiye | Safety feature hai |
+| `terraform destroy` image delete nahi kar paaya | Wahi `nginx:alpine` image `typing-race-nginx-1` bhi use kar raha tha | `terraform state rm docker_image.nginx` (sirf state se hatata hai). Demo ke liye alag image behtar hoti |
+| `git add .` ne `.terraform/` utha liya | `.gitignore` mein `.env.terraform/` ek hi line ban gayi (newline missing) | Har entry alag line par. `git add .` se pehle `git status`. `git reset` se unstage |
+
+### Concepts
+- **Pipeline order:** test -> build -> Trivy scan -> (sirf push event par) GHCR push. Scan fail to push nahi hota.
+- **Tags:** image `:sha` (exact commit) aur `:latest` dono tags se push hoti hai.
+- **Image apne aap update nahi hoti:** code badalne ke baad `docker compose up -d --build` chahiye. CI wali image sirf build check aur registry ke liye hai, wo chalti nahi.
+- **Terraform:** config file batati hai "kya hona chahiye". `plan` = sirf dikhata hai, `apply` = karta hai, `destroy` = hatata hai.
+- **State file (`terraform.tfstate`):** Terraform ki memory. Git mein kabhi nahi. `.terraform.lock.hcl` Git mein jaati hai (provider version pin, `requirements.txt` jaisa).
+- **Idempotent:** dobara `plan` chalao to `No changes`.
+- **Drift:** `docker rm -f` ke baad `plan` ne `1 to add` dikhaya. `apply` ne sirf missing container banaya.
