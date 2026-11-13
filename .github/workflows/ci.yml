@@ -22,8 +22,7 @@ jobs:
 
       - run: npm ci
       - run: npm test
-
-   docker:
+  docker:
     needs: test
     runs-on: ubuntu-latest
     permissions:
