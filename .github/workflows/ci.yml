@@ -31,3 +31,11 @@ jobs:
 
       - name: Build Docker image
         run: docker build -t typing-race:ci ./app
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: typing-race:ci
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "0"
+          format: table
