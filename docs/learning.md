@@ -171,3 +171,42 @@ I ran two copies on ports 3000 and 3001. A room created on one did not exist on 
 
 ## 8. Still Confusing (ask about these)
 - ...
+## Steps 13-15: Redis, nginx, resilience tests, CI
+
+### Bugs I hit and how I fixed them
+
+| Problem | Cause | Fix |
+|---|---|---|
+| `SplattingNotPermitted` on `npm install` | `@` is special in PowerShell | Put the package name in quotes: `"@socket.io/redis-adapter"` |
+| npm tried to clone a GitHub repo | I typed `socket.io/redis-adapter` without `@`, npm read it as a GitHub shorthand | Use the full name with `@`, in quotes |
+| Endless `redis error:` lines with `npm start` | App now needs Redis, but I ran it outside Docker | Run the app only with `docker compose up` |
+| `ngnix.conf` not found | Typo in the file name, and file was in the wrong folder | Rename to `nginx.conf` and move to `nginx/` |
+| `not a directory` mount error | `compose up` ran before the file existed, so Docker created a folder named `nginx.conf` | Delete the folder, put the real file there, run `up` again |
+| `ENOENT package.json` | Ran `npm start` in the repo root, but `package.json` is in `app/` | Check the folder first (`pwd`, `ls`) |
+| `docker composer`, `curl.exxe` | Typos | Copy-paste commands, use the up arrow to edit old ones |
+
+Habit I learned: before running a fix command, run `ls` or `docker compose ps` to see the real current state.
+
+### What I learned from breaking things on purpose
+
+- **Stopped Redis:** `/health` returned 503, rooms could not be created. When Redis came back, everything recovered by itself.
+- **Stopped one app container:** the other one kept serving and the browser reconnected. No data was lost because the data lives in Redis, not in the app.
+- **Page still loaded with Redis down:** `index.html` is a static file. Only actions that need Redis failed. This is a partial failure (degraded mode).
+- **`unhealthy` does not restart a container.** Only a crash triggers `restart: unless-stopped`.
+- **Redis is a single point of failure.** App copies are replaceable.
+- **Known limitation:** if an app container dies, its players stay in Redis until the TTL expires (1 hour). A heartbeat would fix this.
+
+### CI with GitHub Actions
+
+- Every push runs `npm ci` and `npm test` on a fresh Linux machine.
+- I broke a test on purpose and CI went red (run #2), then I removed it and CI went green (run #3).
+- README has a CI badge that shows the live status.
+
+### In my own words
+
+- Docker is: 
+- An image is: 
+- A container is: 
+- Redis is: 
+- Why the game stopped when Redis stopped, but not when one app container stopped: 
+- What CI is good for: 
