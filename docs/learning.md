@@ -202,11 +202,3 @@ Habit I learned: before running a fix command, run `ls` or `docker compose ps` t
 - I broke a test on purpose and CI went red (run #2), then I removed it and CI went green (run #3).
 - README has a CI badge that shows the live status.
 
-### In my own words
-
-- Docker is: 
-- An image is: 
-- A container is: 
-- Redis is: 
-- Why the game stopped when Redis stopped, but not when one app container stopped: 
-- What CI is good for: 
