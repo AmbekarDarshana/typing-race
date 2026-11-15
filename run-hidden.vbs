@@ -1,0 +1,1 @@
+CreateObject("Wscript.Shell").Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ""C:\Users\darsh\typing-race\deploy.ps1""", 0, False
