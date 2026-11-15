@@ -42,7 +42,7 @@ const TEXTS = {
   ],
   normal: [
     "The quick brown fox jumps over the lazy dog.",
-    "DevOps is about shipping code faster and safer.",
+    "DevOps is about shipping code faster and safer(v2).",
     "Docker containers package your app with everything it needs.",
     "Automation turns boring manual work into a pipeline.",
   ],
