@@ -5,6 +5,7 @@ const { Server } = require("socket.io");
 const { createClient } = require("redis");
 const { createAdapter } = require("@socket.io/redis-adapter");
 const { cleanRoom, cleanName, countCorrect, calcWpm, calcAccuracy } = require("./logic");
+const client = require("prom-client"); // NEW
 
 const INSTANCE = os.hostname(); // inside Docker this is the container ID
 const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";
@@ -20,6 +21,42 @@ const redis = createClient({ url: REDIS_URL, disableOfflineQueue: true });
 const sub = redis.duplicate();
 redis.on("error", (e) => console.error("redis error:", e.message));
 sub.on("error", (e) => console.error("redis sub error:", e.message));
+
+// ---------- Metrics (Prometheus) ---------- // NEW (poora block)
+client.collectDefaultMetrics(); // memory, CPU, event loop, etc.
+
+const httpRequests = new client.Counter({
+  name: "typingrace_http_requests_total",
+  help: "HTTP requests handled by Express",
+  labelNames: ["status"],
+});
+const roomsCreated = new client.Counter({
+  name: "typingrace_rooms_created_total",
+  help: "Rooms created",
+});
+const racesStarted = new client.Counter({
+  name: "typingrace_races_started_total",
+  help: "Races started",
+});
+const racesFinished = new client.Counter({
+  name: "typingrace_races_finished_total",
+  help: "Races finished",
+});
+const playersConnected = new client.Gauge({
+  name: "typingrace_players_connected",
+  help: "Players currently connected to this instance",
+});
+
+app.use((req, res, next) => {
+  res.on("finish", () => httpRequests.inc({ status: String(res.statusCode) }));
+  next();
+});
+
+app.get("/metrics", async (req, res) => {
+  res.set("Content-Type", client.register.contentType);
+  res.end(await client.register.metrics());
+});
+// ---------- end metrics ----------
 
 app.use(express.static("public"));
 
@@ -153,6 +190,7 @@ async function finishRace(room, round) {
   // hSetNX ("set if not exists") is atomic, so only ONE of them wins.
   const won = await redis.hSetNX(raceKey(room), "ended:" + round, "1");
   if (!won) return;
+  racesFinished.inc(); // NEW
 
   await redis.hSet(raceKey(room), "status", "finished");
   await broadcast(room);
@@ -231,6 +269,7 @@ async function handleProgress(socket, typed) {
 
 io.on("connection", (socket) => {
   console.log(`[${INSTANCE}] player connected:`, socket.id);
+  playersConnected.inc(); // NEW
   socket.emit("server:info", INSTANCE);
 
   socket.on(
@@ -250,6 +289,7 @@ io.on("connection", (socket) => {
           round: "0",
           finishedCount: "0",
         });
+        roomsCreated.inc(); // NEW
       }
 
       socket.data.room = room;
@@ -273,6 +313,7 @@ io.on("connection", (socket) => {
       if (!race || race.status === "countdown" || race.status === "running") return;
 
       const round = Number(race.round) + 1;
+      racesStarted.inc(); // NEW
       const chosen = cleanMode(mode);
       const text = randomText(chosen);
 
@@ -318,6 +359,7 @@ io.on("connection", (socket) => {
   socket.on(
     "disconnect",
     safe(async () => {
+      playersConnected.dec(); // NEW
       console.log(`[${INSTANCE}] player left:`, socket.id);
       await leaveRoom(socket);
     })
