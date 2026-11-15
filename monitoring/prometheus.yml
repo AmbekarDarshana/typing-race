@@ -1,7 +1,10 @@
-apiVersion: 1
-datasources:
-  - name: Prometheus
-    type: prometheus
-    access: proxy
-    url: http://prometheus:9090
-    isDefault: true
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: typing-race-app
+    dns_sd_configs:
+      - names: ["app"]
+        type: A
+        port: 3000
+        refresh_interval: 15s
